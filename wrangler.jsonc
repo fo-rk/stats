@@ -1,0 +1,40 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "stats",
+	"main": "src/index.js",
+	"compatibility_date": "2025-10-08",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "./public"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [{
+        "binding": "DB",
+        "database_name": "stats",
+        "database_id": "21481e4d-ec33-4042-b675-e1adfa43dc10"
+    }],
+    "queues": {
+        "producers": [
+            {
+                "binding": "STATS",
+                "queue": "stats-queue"
+            }
+        ],
+        "consumers": [
+            {
+                "queue": "stats-queue",
+                "max_batch_size": 10,
+                "max_batch_timeout": 30,
+                "max_retries": 10
+            }
+        ]
+    },
+    "routes": [
+        {
+            "pattern": "stats.fork.studio",
+            "custom_domain": true
+        }
+    ],
+}

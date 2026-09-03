@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fork stats</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#fafafa;color:#111}
+main{max-width:640px;margin:0 auto;padding:60px 20px}
+h1{font-size:28px;margin:0 0 8px}
+p{color:#4b5563}
+pre{background:#111;color:#e5e7eb;padding:14px 16px;border-radius:10px;overflow-x:auto;font-size:13px;margin:20px 0}
+code{background:#e5e7eb;border-radius:4px;padding:1px 5px;font-size:13px}
+a{color:#4338ca}
+</style>
+</head>
+<body>
+<main>
+<h1>fork stats</h1>
+<p>Privacy-respecting pageview analytics. No cookies, no personal data — unique visitors are a daily-rotating anonymous hash, location is country-level only.</p>
+<p><strong>1.</strong> Add this line to the <code>&lt;head&gt;</code> of any site, using your client slug:</p>
+<pre>&lt;script defer data-website="your-slug" src="https://stats.fork.studio/stat.js"&gt;&lt;/script&gt;</pre>
+<p><strong>2.</strong> View the dashboard at <a href="/your-slug">stats.fork.studio/your-slug</a> — supports <code>?days=7|30|90</code>. Hits appear within about 30 seconds.</p>
+<p>Localhost traffic is ignored. Works with client-side routed sites (pushState/replaceState/popstate). Email events (Resend) are collected separately in the same store.</p>
+</main>
+</body>
+</html>
