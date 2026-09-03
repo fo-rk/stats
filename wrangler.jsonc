@@ -35,6 +35,10 @@
         {
             "pattern": "stats.fork.studio",
             "custom_domain": true
+        },
+        {
+            "pattern": "analytics.fork.studio",
+            "custom_domain": true
         }
     ],
 }

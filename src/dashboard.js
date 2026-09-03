@@ -50,7 +50,7 @@ export function renderDashboard({ slug, days, totals, series, pages, referrers, 
 <meta name="robots" content="noindex"><title>${esc(slug)} · fork stats</title><style>${CSS}</style></head><body>
 <main><p class="brand"><a href="/">fork stats</a></p><h1>${esc(slug)}</h1>
 <p>No pageviews in the last ${days} days. Drop this line in the <code>&lt;head&gt;</code> of the site:</p>
-<pre>&lt;script defer data-website="${esc(slug)}" src="https://stats.fork.studio/stat.js"&gt;&lt;/script&gt;</pre>
+<pre>&lt;script defer data-website="${esc(slug)}" src="https://analytics.fork.studio/beacon.js"&gt;&lt;/script&gt;</pre>
 <p class="dim">No cookies, no personal data — unique visitors are a daily-rotating hash of IP + browser, country only.</p>
 </main></body></html>`;
     }
