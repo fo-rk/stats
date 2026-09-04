@@ -40,7 +40,7 @@ function table(title, rows, keyFn) {
     </table></div>`;
 }
 
-export function renderDashboard({ slug, days, totals, series, pages, referrers, countries }) {
+export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys }) {
     const hasData = totals && Number(totals.pageviews) > 0;
     const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
         `<a class="range${d === days ? ' active' : ''}" href="/${esc(slug)}?days=${d}">${label}d</a>`).join('');
@@ -67,6 +67,9 @@ ${table('Top pages', pages, r => esc(r.path))}
 ${table('Referrers', referrers, r => esc(r.referrer))}
 ${table('Locations', countries, r => `${flag(r.country)} ${esc(r.country)}`)}
 </div>
+${(journeys || []).length ? `<div class="card"><h2>Journeys</h2><table>
+<tbody>${journeys.map(j => `<tr><td class="k"><a href="/${esc(slug)}/${esc(j.journey)}">${esc(j.journey)}</a></td><td>${j.visitors} visitors</td><td></td></tr>`).join('')}</tbody>
+</table></div>` : ''}
 <p class="dim">Last ${days} days · no cookies, no personal data · unique visitors = daily-rotating anonymous hash</p>
 </main></body></html>`;
 }
@@ -93,3 +96,46 @@ pre{background:#111;color:#e5e7eb;padding:14px 16px;border-radius:10px;overflow-
 .dim{color:#9ca3af;font-size:13px}
 svg rect:hover{fill:#4338ca}
 `;
+
+export function renderJourney({ slug, journey, days, funnel, steps }) {
+    const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
+        `<a class="range${d === days ? ' active' : ''}" href="/${esc(slug)}/${esc(journey)}?days=${d}">${label}d</a>`).join('');
+
+    if (!funnel.length) {
+        return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>${esc(journey)} · ${esc(slug)} · fork stats</title><style>${CSS}</style></head><body>
+<main><p class="brand"><a href="/">fork stats</a> / <a href="/${esc(slug)}">${esc(slug)}</a></p><h1>${esc(journey)}</h1>
+<p>No journey events in the last ${days} days. Track a journey with any of these:</p>
+<pre>&lt;body data-journey="${esc(journey)}"&gt;   &lt;!-- every pageview becomes a step --&gt;</pre>
+<pre>&lt;button data-journey="${esc(journey)}" data-journey-step="clicked"&gt;Go&lt;/button&gt;</pre>
+<pre>import { journey } from '@fork/stats'; journey('${esc(journey)}', 'form-submitted')</pre>
+<p class="dim">Journeys are same-day per visitor (daily-rotating anonymous hash) · steps are ordered by first seen</p>
+</main></body></html>`;
+    }
+
+    const starters = funnel[0].visitors;
+    const rows = funnel.map((f, i) => `
+        <tr>
+            <td class="k">${i + 1}. ${esc(f.step)}</td>
+            <td><div class="fbar"><div class="ffill" style="width:${Math.max(2, f.pctOfStart)}%"></div></div></td>
+            <td>${f.visitors}</td>
+            <td>${f.pctOfStart}%</td>
+            <td>${i === 0 ? '—' : f.pctFromPrev + '%'}</td>
+        </tr>`).join('');
+
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>${esc(journey)} · ${esc(slug)} · fork stats</title><style>${CSS}
+.fbar{background:#f3f4f6;border-radius:4px;height:14px;min-width:120px}.ffill{background:#6366f1;height:14px;border-radius:4px}
+th.r,td.r{text-align:right}
+</style></head><body>
+<main><p class="brand"><a href="/">fork stats</a> / <a href="/${esc(slug)}">${esc(slug)}</a> <span class="rangebox">${range}</span></p>
+<h1>${esc(journey)}</h1>
+<div class="stats"><div class="card stat"><span class="n">${starters}</span><span class="l">Journey starters</span></div>
+<div class="card stat"><span class="n">${funnel[funnel.length - 1].visitors}</span><span class="l">Completed (${funnel[funnel.length - 1].pctOfStart}%)</span></div></div>
+<div class="card"><table>
+<thead><tr><th>Step</th><th></th><th class="r">Visitors</th><th class="r">Of starters</th><th class="r">From prev</th></tr></thead>
+<tbody>${rows}</tbody>
+</table></div>
+<p class="dim">Last ${days} days · ${steps.length} step${steps.length === 1 ? '' : 's'} · a visitor reaches a step only after touching every earlier step in order</p>
+</main></body></html>`;
+}

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { customAlphabet } from 'nanoid';
-import { renderDashboard } from './dashboard.js';
+import { renderDashboard, renderJourney } from './dashboard.js';
 
 const nanoid = customAlphabet('123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz', 22);
 
@@ -83,15 +83,39 @@ app.post('/api/event', async (c) => {
     }
 
     let path = str(body?.url, 512);
-    if (!path || !path.startsWith('/')) {
-        return c.text('Bad url', 400);
+    if (path && !path.startsWith('/')) {
+        path = null;
     }
-    path = path.split('?')[0].split('#')[0] || '/';
+    if (path) {
+        path = path.split('?')[0].split('#')[0] || '/';
+    }
 
     let referrer = null;
     const rawReferrer = str(body?.referrer, 512);
     if (rawReferrer) {
         try { referrer = new URL(rawReferrer).hostname.toLowerCase(); } catch {}
+    }
+
+    const journey = str(body?.journey, 64);
+    const hasJourney = journey && SLUG.test(journey);
+    if (journey && !hasJourney) {
+        return c.text('Bad journey', 400);
+    }
+    let step = str(body?.step, 128);
+    if (step) {
+        step = step.trim().slice(0, 128);
+    }
+    const kind = ['page', 'click', 'custom'].includes(body?.kind)
+        ? body.kind
+        : (path && !step ? 'page' : 'custom');
+    if (!path && !hasJourney) {
+        return c.text('Nothing to record', 400);
+    }
+    if (hasJourney && !step) {
+        step = kind === 'page' && path ? path : null;
+    }
+    if (hasJourney && !step) {
+        return c.text('Bad step', 400);
     }
 
     const country = (typeof c.req.raw.cf?.country === 'string' && /^[A-Z]{2}$/.test(c.req.raw.cf.country))
@@ -105,19 +129,106 @@ app.post('/api/event', async (c) => {
     // Daily-rotating anonymous visitor id: no cookies, no PII,
     // same visitor resolves to a different id each day
     const visitor_hash = (await sha256hex(`${ip}|${ua}|${website}|${day}|${c.env.STATS_SALT || ''}`)).slice(0, 16);
+    const timestamp = new Date().toISOString();
 
-    await c.env.STATS.send({
-        table: 'pageviews',
-        id: nanoid(),
-        website,
-        path,
-        referrer,
-        country,
-        visitor_hash,
-        timestamp: new Date().toISOString()
-    });
+    if (path && kind === 'page') {
+        await c.env.STATS.send({
+            table: 'pageviews',
+            id: nanoid(),
+            website,
+            path,
+            referrer,
+            country,
+            visitor_hash,
+            timestamp
+        });
+    }
+
+    if (hasJourney) {
+        await c.env.STATS.send({
+            table: 'journey_events',
+            id: nanoid(),
+            website,
+            journey,
+            step,
+            kind,
+            visitor_hash,
+            timestamp
+        });
+    }
 
     return c.json({ ok: true }, 200, CORS);
+});
+
+// ---------- Journey funnel ----------
+
+function computeFunnel(rows) {
+    // rows: { step, visitor_hash, t (first touch per visitor per step) }
+    const globalFirst = {};
+    for (const r of rows) {
+        if (!globalFirst[r.step] || r.t < globalFirst[r.step]) globalFirst[r.step] = r.t;
+    }
+    const steps = Object.keys(globalFirst).sort((a, b) => globalFirst[a] < globalFirst[b] ? -1 : 1);
+
+    const byVisitor = new Map();
+    for (const r of rows) {
+        if (!byVisitor.has(r.visitor_hash)) byVisitor.set(r.visitor_hash, {});
+        const v = byVisitor.get(r.visitor_hash);
+        if (!v[r.step] || r.t < v[r.step]) v[r.step] = r.t;
+    }
+
+    // Ordered funnel: a visitor "reaches" step N only if they touched
+    // every earlier step at an earlier (or equal) time, in sequence
+    const reached = new Array(steps.length).fill(0);
+    for (const v of byVisitor.values()) {
+        let cursor = '';
+        for (let i = 0; i < steps.length; i++) {
+            const t = v[steps[i]];
+            if (t && t >= cursor) {
+                reached[i]++;
+                cursor = t;
+            } else {
+                break;
+            }
+        }
+    }
+
+    return steps.map((step, i) => ({
+        step,
+        visitors: reached[i],
+        pctOfStart: reached[0] ? Math.round((reached[i] / reached[0]) * 100) : 0,
+        pctFromPrev: i === 0 ? 100 : (reached[i - 1] ? Math.round((reached[i] / reached[i - 1]) * 100) : 0)
+    }));
+}
+
+app.get('/:slug/:journey', async (c) => {
+    const slug = c.req.param('slug');
+    const journey = c.req.param('journey');
+    if (slug === 'resend' || slug === 'api' || !SLUG.test(slug) || !SLUG.test(journey)) {
+        return c.text('Not found', 404);
+    }
+
+    const days = Math.min(Math.max(parseInt(c.req.query('days')) || 30, 1), 365);
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+    const { results } = await c.env.DB.prepare(`
+        SELECT step, visitor_hash, MIN(timestamp) AS t
+        FROM journey_events
+        WHERE website = ?1 AND journey = ?2 AND timestamp >= ?3
+        GROUP BY step, visitor_hash
+    `).bind(slug, journey, cutoff).all();
+
+    return c.html(
+        renderJourney({
+            slug,
+            journey,
+            days,
+            funnel: computeFunnel(results || []),
+            steps: [...new Set((results || []).map(r => r.step))]
+        }),
+        200,
+        { 'Cache-Control': 'no-store' }
+    );
 });
 
 // ---------- Client dashboards ----------
@@ -132,7 +243,7 @@ app.get('/:slug', async (c) => {
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     const db = c.env.DB;
 
-    const [totals, series, pages, referrers, countries] = await db.batch([
+    const [totals, series, pages, referrers, countries, journeys] = await db.batch([
         db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM pageviews WHERE website = ?1 AND timestamp >= ?2`).bind(slug, cutoff),
         db.prepare(`SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
@@ -144,7 +255,10 @@ app.get('/:slug', async (c) => {
                     GROUP BY referrer ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT country, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND country IS NOT NULL
-                    GROUP BY country ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff)
+                    GROUP BY country ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
+        db.prepare(`SELECT journey, COUNT(DISTINCT visitor_hash) AS visitors
+                    FROM journey_events WHERE website = ?1 AND timestamp >= ?2
+                    GROUP BY journey ORDER BY visitors DESC LIMIT 10`).bind(slug, cutoff)
     ]);
 
     return c.html(
@@ -155,7 +269,8 @@ app.get('/:slug', async (c) => {
             series: series.results,
             pages: pages.results,
             referrers: referrers.results,
-            countries: countries.results
+            countries: countries.results,
+            journeys: journeys.results
         }),
         200,
         { 'Cache-Control': 'no-store' }
@@ -173,7 +288,27 @@ export default {
             const body = message.body;
 
             try {
-                if (body?.table === 'pageviews') {
+                if (body?.table === 'journey_events') {
+                    const id = str(body.id, 64);
+                    const website = str(body.website, 64);
+                    const journey = str(body.journey, 64);
+                    const step = str(body.step, 128);
+                    const kind = str(body.kind, 16);
+                    const visitorHash = str(body.visitor_hash, 32);
+                    const timestamp = str(body.timestamp, 32);
+
+                    if (!id || !website || !SLUG.test(website) || !journey || !SLUG.test(journey)
+                        || !step || !kind || !visitorHash || !/^[a-f0-9]{16}$/.test(visitorHash) || !timestamp) {
+                        console.log('Invalid journey message, discarding', JSON.stringify(body));
+                        message.ack();
+                        continue;
+                    }
+
+                    stmts.push(env.DB.prepare(`
+                        INSERT OR IGNORE INTO journey_events (id, website, journey, step, kind, visitor_hash, timestamp)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    `).bind(id, website, journey, step, kind, visitorHash, timestamp));
+                } else if (body?.table === 'pageviews') {
                     const website = str(body.website, 64);
                     const path = str(body.path, 512);
                     const visitorHash = str(body.visitor_hash, 32);

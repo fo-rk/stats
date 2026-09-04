@@ -1,6 +1,9 @@
 {
-	"name": "analytics",
+	"name": "@fork/stats",
 	"type": "module",
+	"exports": {
+		".": "./module/index.js"
+	},
 	"scripts": {
 		"dev": "wrangler dev",
 		"deploy": "wrangler deploy --minify",
