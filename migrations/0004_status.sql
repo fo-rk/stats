@@ -1,0 +1,1 @@
+ALTER TABLE pageviews ADD COLUMN status INTEGER;

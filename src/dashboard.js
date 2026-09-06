@@ -40,7 +40,7 @@ function table(title, rows, keyFn) {
     </table></div>`;
 }
 
-export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys, hosts }) {
+export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys, hosts, notFound }) {
     const hasData = totals && Number(totals.pageviews) > 0;
     const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
         `<a class="range${d === days ? ' active' : ''}" href="/${esc(slug)}?days=${d}">${label}d</a>`).join('');
@@ -73,6 +73,10 @@ ${table('Locations', countries, r => `${flag(r.country)} ${esc(r.country)}`)}
 ${(hosts || []).length ? `<div class="card"><h2>Hosts</h2><table>
 <thead><tr><th></th><th>Visitors</th><th>Pageviews</th></tr></thead>
 <tbody>${hosts.map(h => `<tr><td class="k">${esc(h.host)}</td><td>${h.visitors}</td><td>${h.pageviews}</td></tr>`).join('')}</tbody>
+</table></div>` : ''}
+${(notFound || []).length ? `<div class="card"><h2>Not found (${notFound.reduce((a, r) => a + r.hits, 0)} hits)</h2><table>
+<thead><tr><th>404 path</th><th>Visitors</th><th>Hits</th></tr></thead>
+<tbody>${notFound.map(r => `<tr><td class="k">${esc(r.path)}</td><td>${r.visitors}</td><td>${r.hits}</td></tr>`).join('')}</tbody>
 </table></div>` : ''}
 ${(journeys || []).length ? `<div class="card"><h2>Journeys</h2><table>
 <tbody>${journeys.map(j => `<tr><td class="k"><a href="/${esc(slug)}/${esc(j.journey)}">${esc(j.journey)}</a></td><td>${j.visitors} visitors</td><td></td></tr>`).join('')}</tbody>

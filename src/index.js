@@ -137,6 +137,11 @@ app.post('/api/event', async (c) => {
     // Browsers send Origin on cross-origin POSTs — the authoritative host of the hit
     const host = normalizeHost(c.req.header('Origin')) || normalizeHost(body?.host);
 
+    // Optional page status (e.g. 404), only meaningful error codes accepted
+    const status = (Number.isInteger(body?.status) && body.status >= 400 && body.status <= 599)
+        ? body.status
+        : null;
+
     const ip = c.req.header('CF-Connecting-IP') || '';
     const ua = c.req.header('User-Agent') || '';
     const day = new Date().toISOString().slice(0, 10);
@@ -155,6 +160,7 @@ app.post('/api/event', async (c) => {
             host,
             referrer,
             country,
+            status,
             visitor_hash,
             timestamp
         });
@@ -263,25 +269,30 @@ app.get('/:slug', async (c) => {
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     const db = c.env.DB;
 
-    const [totals, series, pages, referrers, countries, journeys, hosts] = await db.batch([
+    const [totals, series, pages, referrers, countries, journeys, hosts, notFound] = await db.batch([
         db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2`).bind(slug, cutoff),
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND (status IS NULL OR status < 400)`).bind(slug, cutoff),
         db.prepare(`SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day`).bind(slug, cutoff),
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND (status IS NULL OR status < 400)
+                    GROUP BY day ORDER BY day`).bind(slug, cutoff),
         db.prepare(`SELECT COALESCE(host, '') AS host, path, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 GROUP BY host, path ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND (status IS NULL OR status < 400)
+                    GROUP BY host, path ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT referrer, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND referrer IS NOT NULL
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND referrer IS NOT NULL AND (status IS NULL OR status < 400)
                     GROUP BY referrer ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT country, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND country IS NOT NULL
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND country IS NOT NULL AND (status IS NULL OR status < 400)
                     GROUP BY country ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT journey, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM journey_events WHERE website = ?1 AND timestamp >= ?2
                     GROUP BY journey ORDER BY visitors DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT COALESCE(host, '(unknown)') AS host, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND host IS NOT NULL
-                    GROUP BY host ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff)
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND host IS NOT NULL AND (status IS NULL OR status < 400)
+                    GROUP BY host ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
+        db.prepare(`SELECT path, COUNT(*) AS hits, COUNT(DISTINCT visitor_hash) AS visitors
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND status >= 400
+                    GROUP BY path ORDER BY hits DESC LIMIT 10`).bind(slug, cutoff)
     ]);
 
     return c.html(
@@ -294,7 +305,8 @@ app.get('/:slug', async (c) => {
             referrers: referrers.results,
             countries: countries.results,
             journeys: journeys.results,
-            hosts: hosts.results
+            hosts: hosts.results,
+            notFound: notFound.results
         }),
         200,
         { 'Cache-Control': 'no-store' }
@@ -342,6 +354,9 @@ export default {
                     const referrer = body.referrer === null ? null : str(body.referrer, 256);
                     const country = body.country === null ? null : str(body.country, 2);
                     const host = body.host === null ? null : normalizeHost(body.host);
+                    const status = (Number.isInteger(body.status) && body.status >= 400 && body.status <= 599)
+                        ? body.status
+                        : null;
 
                     if (!id || !website || !SLUG.test(website) || !path || !path.startsWith('/')
                         || !visitorHash || !/^[a-f0-9]{16}$/.test(visitorHash) || !timestamp) {
@@ -351,9 +366,9 @@ export default {
                     }
 
                     stmts.push(env.DB.prepare(`
-                        INSERT OR IGNORE INTO pageviews (id, website, path, host, referrer, country, visitor_hash, timestamp)
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                    `).bind(id, website, path, host, referrer, country, visitorHash, timestamp));
+                        INSERT OR IGNORE INTO pageviews (id, website, path, host, referrer, country, status, visitor_hash, timestamp)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    `).bind(id, website, path, host, referrer, country, status, visitorHash, timestamp));
                 } else {
                     // Legacy shape: Resend email events -> stats table
                     const id = str(body?.id, 64);

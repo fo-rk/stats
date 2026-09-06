@@ -116,17 +116,22 @@ export function init(options) {
  * Record a pageview. Call from router hooks, or use init({ auto: true }).
  * @param {string} [path] — defaults to the current pathname
  * @param {string} [journey] — optional journey this page belongs to
+ * @param {{ status?: number }} [options] — optional, e.g. { status: 404 } to log error pages separately
  */
-export function page(path, journey) {
+export function page(path, journey, options = {}) {
     if (!isBrowser) return;
     const p = (path || window.location.pathname).split('?')[0].split('#')[0] || '/';
     const j = journey || pageJourney();
     if (!dedupe('page:' + p)) return;
+    const status = (Number.isInteger(options.status) && options.status >= 400 && options.status <= 599)
+        ? options.status
+        : undefined;
     emit({
         url: p,
         referrer: document.referrer || undefined,
         journey: j,
-        kind: 'page'
+        kind: 'page',
+        status
     });
 }
 
