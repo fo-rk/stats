@@ -112,8 +112,8 @@ h1{margin:8px 0 20px;font-size:26px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;color:#9ca3af;font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:6px 8px 6px 0}
 th:nth-child(n+2),td:nth-child(n+2){text-align:right}
-td{padding:6px 8px 6px 0;border-top:1px solid #f3f4f6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
-td.k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+td{padding:6px 8px 6px 0;border-top:1px solid #f3f4f6;white-space:nowrap;text-align:left}
+td.k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:normal;overflow-wrap:anywhere;min-width:140px}
 td.k a{color:#4338ca}
 .hpill{display:inline-block;color:#fff;font-size:10px;font-weight:600;line-height:1;padding:3px 7px;border-radius:99px;margin-left:8px;vertical-align:middle}
 pre{background:#111;color:#e5e7eb;padding:14px 16px;border-radius:10px;overflow-x:auto;font-size:13px}

@@ -15,10 +15,10 @@ const str = (v, max = 256) => (typeof v === 'string' && v.length > 0 && v.length
 function normalizeHost(value) {
     if (!value) return null;
     try {
-        const host = new URL(value).hostname.toLowerCase();
+        const host = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
         return HOSTNAME.test(host) ? host : null;
     } catch {
-        const host = String(value).toLowerCase();
+        const host = String(value).toLowerCase().replace(/^www\./, '');
         return HOSTNAME.test(host) ? host : null;
     }
 }
