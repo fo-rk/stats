@@ -51,6 +51,10 @@ Dashboard: `stats.fork.studio/your-slug/join` — ordered funnel with visitors, 
 
 Journeys are same-day per visitor (daily-rotating hash) — a returning visitor tomorrow counts as a new visitor. That's the privacy model.
 
+## Multiple hosts / apps per property
+
+Sites on different hosts can share one `website` slug — the visitor hash is host-independent, so a person moving from `changingrealities.org` to `app.changingrealities.org` (both using `data-website: 'changingrealities'`) is the same anonymous visitor, and journeys span hosts seamlessly. The host of each hit is captured automatically from the browser's `Origin` header — no client changes needed. The dashboard shows a Hosts breakdown, and pages / journey steps get host-prefixed labels when a property spans multiple hosts.
+
 ## Ingest API
 
 `POST /api/event` (text/plain JSON, no preflight):

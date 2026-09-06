@@ -9,7 +9,19 @@ const app = new Hono();
 // ---------- helpers ----------
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const str = (v, max = 256) => (typeof v === 'string' && v.length > 0 && v.length <= max) ? v : null;
+
+function normalizeHost(value) {
+    if (!value) return null;
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+        return HOSTNAME.test(host) ? host : null;
+    } catch {
+        const host = String(value).toLowerCase();
+        return HOSTNAME.test(host) ? host : null;
+    }
+}
 
 async function sha256hex(input) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
@@ -122,6 +134,9 @@ app.post('/api/event', async (c) => {
         ? c.req.raw.cf.country
         : null;
 
+    // Browsers send Origin on cross-origin POSTs — the authoritative host of the hit
+    const host = normalizeHost(c.req.header('Origin')) || normalizeHost(body?.host);
+
     const ip = c.req.header('CF-Connecting-IP') || '';
     const ua = c.req.header('User-Agent') || '';
     const day = new Date().toISOString().slice(0, 10);
@@ -137,6 +152,7 @@ app.post('/api/event', async (c) => {
             id: nanoid(),
             website,
             path,
+            host,
             referrer,
             country,
             visitor_hash,
@@ -152,6 +168,7 @@ app.post('/api/event', async (c) => {
             journey,
             step,
             kind,
+            host,
             visitor_hash,
             timestamp
         });
@@ -163,18 +180,20 @@ app.post('/api/event', async (c) => {
 // ---------- Journey funnel ----------
 
 function computeFunnel(rows) {
-    // rows: { step, visitor_hash, t (first touch per visitor per step) }
+    // rows: { step, host, visitor_hash, t (first touch per visitor per host-step) }
     const globalFirst = {};
     for (const r of rows) {
-        if (!globalFirst[r.step] || r.t < globalFirst[r.step]) globalFirst[r.step] = r.t;
+        const key = r.host + '|' + r.step;
+        if (!globalFirst[key] || r.t < globalFirst[key]) globalFirst[key] = r.t;
     }
     const steps = Object.keys(globalFirst).sort((a, b) => globalFirst[a] < globalFirst[b] ? -1 : 1);
 
     const byVisitor = new Map();
     for (const r of rows) {
+        const key = r.host + '|' + r.step;
         if (!byVisitor.has(r.visitor_hash)) byVisitor.set(r.visitor_hash, {});
         const v = byVisitor.get(r.visitor_hash);
-        if (!v[r.step] || r.t < v[r.step]) v[r.step] = r.t;
+        if (!v[key] || r.t < v[key]) v[key] = r.t;
     }
 
     // Ordered funnel: a visitor "reaches" step N only if they touched
@@ -193,8 +212,9 @@ function computeFunnel(rows) {
         }
     }
 
-    return steps.map((step, i) => ({
-        step,
+    return steps.map((key, i) => ({
+        host: key.split('|')[0],
+        step: key.split('|')[1],
         visitors: reached[i],
         pctOfStart: reached[0] ? Math.round((reached[i] / reached[0]) * 100) : 0,
         pctFromPrev: i === 0 ? 100 : (reached[i - 1] ? Math.round((reached[i] / reached[i - 1]) * 100) : 0)
@@ -212,10 +232,10 @@ app.get('/:slug/:journey', async (c) => {
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
 
     const { results } = await c.env.DB.prepare(`
-        SELECT step, visitor_hash, MIN(timestamp) AS t
+        SELECT step, COALESCE(host, '') AS host, visitor_hash, MIN(timestamp) AS t
         FROM journey_events
         WHERE website = ?1 AND journey = ?2 AND timestamp >= ?3
-        GROUP BY step, visitor_hash
+        GROUP BY step, host, visitor_hash
     `).bind(slug, journey, cutoff).all();
 
     return c.html(
@@ -224,7 +244,7 @@ app.get('/:slug/:journey', async (c) => {
             journey,
             days,
             funnel: computeFunnel(results || []),
-            steps: [...new Set((results || []).map(r => r.step))]
+            steps: [...new Set((results || []).map(r => r.host + '|' + r.step))]
         }),
         200,
         { 'Cache-Control': 'no-store' }
@@ -243,13 +263,13 @@ app.get('/:slug', async (c) => {
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     const db = c.env.DB;
 
-    const [totals, series, pages, referrers, countries, journeys] = await db.batch([
+    const [totals, series, pages, referrers, countries, journeys, hosts] = await db.batch([
         db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM pageviews WHERE website = ?1 AND timestamp >= ?2`).bind(slug, cutoff),
         db.prepare(`SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM pageviews WHERE website = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day`).bind(slug, cutoff),
-        db.prepare(`SELECT path, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
-                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 GROUP BY path ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
+        db.prepare(`SELECT COALESCE(host, '') AS host, path, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 GROUP BY host, path ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT referrer, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND referrer IS NOT NULL
                     GROUP BY referrer ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
@@ -258,7 +278,10 @@ app.get('/:slug', async (c) => {
                     GROUP BY country ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff),
         db.prepare(`SELECT journey, COUNT(DISTINCT visitor_hash) AS visitors
                     FROM journey_events WHERE website = ?1 AND timestamp >= ?2
-                    GROUP BY journey ORDER BY visitors DESC LIMIT 10`).bind(slug, cutoff)
+                    GROUP BY journey ORDER BY visitors DESC LIMIT 10`).bind(slug, cutoff),
+        db.prepare(`SELECT COALESCE(host, '(unknown)') AS host, COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
+                    FROM pageviews WHERE website = ?1 AND timestamp >= ?2 AND host IS NOT NULL
+                    GROUP BY host ORDER BY pageviews DESC LIMIT 10`).bind(slug, cutoff)
     ]);
 
     return c.html(
@@ -270,7 +293,8 @@ app.get('/:slug', async (c) => {
             pages: pages.results,
             referrers: referrers.results,
             countries: countries.results,
-            journeys: journeys.results
+            journeys: journeys.results,
+            hosts: hosts.results
         }),
         200,
         { 'Cache-Control': 'no-store' }
@@ -296,6 +320,7 @@ export default {
                     const kind = str(body.kind, 16);
                     const visitorHash = str(body.visitor_hash, 32);
                     const timestamp = str(body.timestamp, 32);
+                    const host = body.host === null ? null : normalizeHost(body.host);
 
                     if (!id || !website || !SLUG.test(website) || !journey || !SLUG.test(journey)
                         || !step || !kind || !visitorHash || !/^[a-f0-9]{16}$/.test(visitorHash) || !timestamp) {
@@ -305,9 +330,9 @@ export default {
                     }
 
                     stmts.push(env.DB.prepare(`
-                        INSERT OR IGNORE INTO journey_events (id, website, journey, step, kind, visitor_hash, timestamp)
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                    `).bind(id, website, journey, step, kind, visitorHash, timestamp));
+                        INSERT OR IGNORE INTO journey_events (id, website, journey, step, kind, host, visitor_hash, timestamp)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    `).bind(id, website, journey, step, kind, host, visitorHash, timestamp));
                 } else if (body?.table === 'pageviews') {
                     const website = str(body.website, 64);
                     const path = str(body.path, 512);
@@ -316,6 +341,7 @@ export default {
                     const id = str(body.id, 64);
                     const referrer = body.referrer === null ? null : str(body.referrer, 256);
                     const country = body.country === null ? null : str(body.country, 2);
+                    const host = body.host === null ? null : normalizeHost(body.host);
 
                     if (!id || !website || !SLUG.test(website) || !path || !path.startsWith('/')
                         || !visitorHash || !/^[a-f0-9]{16}$/.test(visitorHash) || !timestamp) {
@@ -325,9 +351,9 @@ export default {
                     }
 
                     stmts.push(env.DB.prepare(`
-                        INSERT OR IGNORE INTO pageviews (id, website, path, referrer, country, visitor_hash, timestamp)
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                    `).bind(id, website, path, referrer, country, visitorHash, timestamp));
+                        INSERT OR IGNORE INTO pageviews (id, website, path, host, referrer, country, visitor_hash, timestamp)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    `).bind(id, website, path, host, referrer, country, visitorHash, timestamp));
                 } else {
                     // Legacy shape: Resend email events -> stats table
                     const id = str(body?.id, 64);

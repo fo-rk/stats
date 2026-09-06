@@ -40,7 +40,7 @@ function table(title, rows, keyFn) {
     </table></div>`;
 }
 
-export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys }) {
+export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys, hosts }) {
     const hasData = totals && Number(totals.pageviews) > 0;
     const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
         `<a class="range${d === days ? ' active' : ''}" href="/${esc(slug)}?days=${d}">${label}d</a>`).join('');
@@ -55,6 +55,9 @@ export function renderDashboard({ slug, days, totals, series, pages, referrers, 
 </main></body></html>`;
     }
 
+    const multiHost = new Set((pages || []).filter(p => p.host).map(p => p.host)).size > 1;
+    const pageLabel = (r) => (multiHost && r.host ? `${esc(r.host)}${esc(r.path)}` : esc(r.path));
+
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${esc(slug)} · fork stats</title><style>${CSS}</style></head><body>
 <main><p class="brand"><a href="/">fork stats</a> <span class="rangebox">${range}</span></p>
@@ -63,10 +66,14 @@ export function renderDashboard({ slug, days, totals, series, pages, referrers, 
 <div class="card stat"><span class="n">${totals.pageviews}</span><span class="l">Pageviews</span></div></div>
 <div class="card">${chartSVG(series, days)}</div>
 <div class="cols">
-${table('Top pages', pages, r => esc(r.path))}
+${table('Top pages', pages, pageLabel)}
 ${table('Referrers', referrers, r => esc(r.referrer))}
 ${table('Locations', countries, r => `${flag(r.country)} ${esc(r.country)}`)}
 </div>
+${(hosts || []).length ? `<div class="card"><h2>Hosts</h2><table>
+<thead><tr><th></th><th>Visitors</th><th>Pageviews</th></tr></thead>
+<tbody>${hosts.map(h => `<tr><td class="k">${esc(h.host)}</td><td>${h.visitors}</td><td>${h.pageviews}</td></tr>`).join('')}</tbody>
+</table></div>` : ''}
 ${(journeys || []).length ? `<div class="card"><h2>Journeys</h2><table>
 <tbody>${journeys.map(j => `<tr><td class="k"><a href="/${esc(slug)}/${esc(j.journey)}">${esc(j.journey)}</a></td><td>${j.visitors} visitors</td><td></td></tr>`).join('')}</tbody>
 </table></div>` : ''}
@@ -114,9 +121,11 @@ export function renderJourney({ slug, journey, days, funnel, steps }) {
     }
 
     const starters = funnel[0].visitors;
+    const multiHost = new Set(funnel.filter(f => f.host).map(f => f.host)).size > 1;
+    const stepLabel = (f) => (multiHost && f.host ? `${esc(f.host)}${f.step.startsWith('/') ? '' : ' · '}${esc(f.step)}` : esc(f.step));
     const rows = funnel.map((f, i) => `
         <tr>
-            <td class="k">${i + 1}. ${esc(f.step)}</td>
+            <td class="k">${i + 1}. ${stepLabel(f)}</td>
             <td><div class="fbar"><div class="ffill" style="width:${Math.max(2, f.pctOfStart)}%"></div></div></td>
             <td>${f.visitors}</td>
             <td>${f.pctOfStart}%</td>
