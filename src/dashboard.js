@@ -98,7 +98,7 @@ ${(journeys || []).length ? `<div class="card"><h2>Journeys</h2><table>
 
 const CSS = `
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#fafafa;color:#111}
-main{max-width:900px;margin:0 auto;padding:32px 20px}
+main{margin:0 auto;padding:32px 4vw}
 .brand{font-weight:600}.brand a{color:inherit;text-decoration:none}
 .rangebox{float:right;display:flex;gap:4px}
 .range{padding:2px 10px;border-radius:99px;border:1px solid #e5e7eb;text-decoration:none;color:#374151;font-size:13px}
