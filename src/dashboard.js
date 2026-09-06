@@ -40,6 +40,12 @@ function table(title, rows, keyFn) {
     </table></div>`;
 }
 
+function hostPill(host) {
+    const label = host.split('.').length >= 3 ? host.split('.')[0] : 'www';
+    const hue = [...host].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 100000, 7) % 360;
+    return `<span class="hpill" style="background:hsl(${hue},60%,45%)" title="${esc(host)}">${esc(label)}</span>`;
+}
+
 export function renderDashboard({ slug, days, totals, series, pages, referrers, countries, journeys, hosts, notFound }) {
     const hasData = totals && Number(totals.pageviews) > 0;
     const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
@@ -56,7 +62,12 @@ export function renderDashboard({ slug, days, totals, series, pages, referrers, 
     }
 
     const multiHost = new Set((pages || []).filter(p => p.host).map(p => p.host)).size > 1;
-    const pageLabel = (r) => (multiHost && r.host ? `${esc(r.host)}${esc(r.path)}` : esc(r.path));
+    const pageLabel = (r) => {
+        if (r.host) {
+            return `<a href="https://${esc(r.host)}${esc(r.path)}">${esc(r.path)}</a>${multiHost ? hostPill(r.host) : ''}`;
+        }
+        return esc(r.path);
+    };
 
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${esc(slug)} · fork stats</title><style>${CSS}</style></head><body>
@@ -103,6 +114,8 @@ th{text-align:left;color:#9ca3af;font-weight:500;font-size:12px;text-transform:u
 th:nth-child(n+2),td:nth-child(n+2){text-align:right}
 td{padding:6px 8px 6px 0;border-top:1px solid #f3f4f6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 td.k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+td.k a{color:#4338ca}
+.hpill{display:inline-block;color:#fff;font-size:10px;font-weight:600;line-height:1;padding:3px 7px;border-radius:99px;margin-left:8px;vertical-align:middle}
 pre{background:#111;color:#e5e7eb;padding:14px 16px;border-radius:10px;overflow-x:auto;font-size:13px}
 .dim{color:#9ca3af;font-size:13px}
 svg rect:hover{fill:#4338ca}
