@@ -1,12 +1,14 @@
 /* @fork/stats — client module for fork stats analytics
  *
  *   import { init, page, journey } from '@fork/stats'
- *   init({ website: 'client-slug' })
+ *   init({ website: 'client-slug', auto: true })
  *   journey('join', 'form-submitted')
  *
  * - Safe to call any export before init(): events buffer until init runs
  * - Safe on the server (SSR): all functions no-op without a browser
  * - Never throws, never blocks the host app
+ * - auto: true gives full parity with the beacon script: pageviews,
+ *   SPA navigation tracking, data-journey attributes and click delegation
  * - No cookies, no personal data — unique visitors are a daily-rotating hash computed server-side
  *
  * @typedef {{ website: string, endpoint?: string, auto?: boolean }} InitOptions
@@ -51,6 +53,31 @@ function emit(event) {
     }
 }
 
+function pageJourney() {
+    return (document.body && document.body.dataset.journey)
+        || (document.documentElement && document.documentElement.dataset.journey);
+}
+
+function stepName(el) {
+    const step = el.getAttribute('data-journey-step');
+    if (step) return step;
+    if (el.id) return el.id;
+    const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
+    if (text) return text.slice(0, 64);
+    return el.tagName.toLowerCase();
+}
+
+function onJourneyClick(event) {
+    let el;
+    try { el = event.target && event.target.closest('[data-journey]'); } catch (e) { return; }
+    // body/html data-journey marks whole pages, not individual clicks
+    if (!el || el === document.body || el === document.documentElement) return;
+    const journey = el.getAttribute('data-journey');
+    const step = stepName(el);
+    if (!journey || !step || !dedupe('click:' + journey + ':' + step)) return;
+    emit({ journey, step, kind: 'click' });
+}
+
 /**
  * Initialise the module. Buffered events created before init are flushed.
  * @param {InitOptions} options
@@ -77,6 +104,7 @@ export function init(options) {
         hook('pushState');
         hook('replaceState');
         window.addEventListener('popstate', track);
+        document.addEventListener('click', onJourneyClick, true);
         track();
     }
 
@@ -92,11 +120,12 @@ export function init(options) {
 export function page(path, journey) {
     if (!isBrowser) return;
     const p = (path || window.location.pathname).split('?')[0].split('#')[0] || '/';
+    const j = journey || pageJourney();
     if (!dedupe('page:' + p)) return;
     emit({
         url: p,
         referrer: document.referrer || undefined,
-        journey,
+        journey: j,
         kind: 'page'
     });
 }
