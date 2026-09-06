@@ -7,11 +7,12 @@
  * - Safe to call any export before init(): events buffer until init runs
  * - Safe on the server (SSR): all functions no-op without a browser
  * - Never throws, never blocks the host app
- * - auto: true gives full parity with the beacon script: pageviews,
- *   SPA navigation tracking, data-journey attributes and click delegation
+ * - auto: true gives full parity with the beacon script: pageviews + SPA navigation tracking
+ * - clicks: true enables data-journey click delegation without auto page tracking
+ *   (use when the host app tracks pages itself via router hooks)
  * - No cookies, no personal data — unique visitors are a daily-rotating hash computed server-side
  *
- * @typedef {{ website: string, endpoint?: string, auto?: boolean }} InitOptions
+ * @typedef {{ website: string, endpoint?: string, auto?: boolean, clicks?: boolean }} InitOptions
  */
 
 const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -90,6 +91,10 @@ export function init(options) {
         auto: !!options.auto
     };
 
+    if (config.auto || options.clicks) {
+        document.addEventListener('click', onJourneyClick, true);
+    }
+
     if (config.auto) {
         const track = () => page();
         const hook = (name) => {
@@ -104,7 +109,6 @@ export function init(options) {
         hook('pushState');
         hook('replaceState');
         window.addEventListener('popstate', track);
-        document.addEventListener('click', onJourneyClick, true);
         track();
     }
 
