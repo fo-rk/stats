@@ -31,6 +31,24 @@
             }
         ]
     },
+    "ratelimits": [
+        {
+            "name": "EVENT_LIMITER",
+            "namespace_id": "1003",
+            "simple": {
+                "limit": 20,
+                "period": 10
+            }
+        },
+        {
+            "name": "VIEW_LIMITER",
+            "namespace_id": "1002",
+            "simple": {
+                "limit": 10,
+                "period": 10
+            }
+        }
+    ],
     "routes": [
         {
             "pattern": "stats.fork.studio",

@@ -82,16 +82,41 @@ const CORS = {
 app.options('/api/event', (c) => c.body(null, 204, CORS));
 
 app.post('/api/event', async (c) => {
+    // Volume gate: abuse of the ingest is what runs up a bill
+    // (token bucket: capacity ~= limit, refill limit/period per second, per IP)
+    const ip = c.req.header('CF-Connecting-IP') || '';
+    const { success } = await c.env.EVENT_LIMITER.limit({ key: ip });
+    if (!success) {
+        return c.text('Too many requests', 429, CORS);
+    }
+
+    // Browsers always send Origin on cross-origin POSTs; naive floods don't
+    if (!c.req.header('Origin') && !c.req.header('User-Agent')) {
+        return c.text('Forbidden', 403, CORS);
+    }
+
     let body;
     try {
-        body = await c.req.json();
+        const text = await c.req.text();
+        if (text.length > 2048) {
+            return c.text('Payload too large', 413, CORS);
+        }
+        body = JSON.parse(text);
     } catch {
-        return c.text('Bad JSON', 400);
+        return c.text('Bad JSON', 400, CORS);
     }
 
     const website = str(body?.website, 64);
     if (!website || !SLUG.test(website)) {
-        return c.text('Bad website', 400);
+        return c.text('Bad website', 400, CORS);
+    }
+
+    // Optional allowlist: set ALLOWED_SITES=slug1,slug2 as a secret to lock ingest down
+    if (c.env.ALLOWED_SITES) {
+        const allowed = String(c.env.ALLOWED_SITES).split(',').map(s => s.trim());
+        if (!allowed.includes(website)) {
+            return c.text('Unknown site', 403, CORS);
+        }
     }
 
     let path = str(body?.url, 512);
@@ -142,7 +167,6 @@ app.post('/api/event', async (c) => {
         ? body.status
         : null;
 
-    const ip = c.req.header('CF-Connecting-IP') || '';
     const ua = c.req.header('User-Agent') || '';
     const day = new Date().toISOString().slice(0, 10);
 
@@ -258,6 +282,11 @@ app.get('/:slug/:journey', async (c) => {
     const days = Math.min(Math.max(parseInt(c.req.query('days')) || 30, 1), 365);
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
 
+    const viewLimit = await c.env.VIEW_LIMITER.limit({ key: c.req.header('CF-Connecting-IP') || '' });
+    if (!viewLimit.success) {
+        return c.text('Too many requests', 429);
+    }
+
     const { results } = await c.env.DB.prepare(`
         SELECT step, COALESCE(host, '') AS host, visitor_hash, MIN(timestamp) AS t
         FROM journey_events
@@ -277,7 +306,7 @@ app.get('/:slug/:journey', async (c) => {
             steps: [...new Set((results || []).map(r => r.host + '|' + r.step))]
         }),
         200,
-        { 'Cache-Control': 'no-store' }
+        { 'Cache-Control': 'public, max-age=30' }
     );
 });
 
@@ -292,6 +321,12 @@ app.get('/:slug', async (c) => {
     const days = Math.min(Math.max(parseInt(c.req.query('days')) || 30, 1), 365);
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     const db = c.env.DB;
+
+    // Gate before the query batch: dashboard reads are the expensive D1 cost
+    const viewLimit = await c.env.VIEW_LIMITER.limit({ key: c.req.header('CF-Connecting-IP') || '' });
+    if (!viewLimit.success) {
+        return c.text('Too many requests', 429);
+    }
 
     const [totals, series, pages, referrers, countries, journeys, hosts, notFound] = await db.batch([
         db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor_hash) AS visitors
@@ -333,7 +368,7 @@ app.get('/:slug', async (c) => {
             notFound: notFound.results
         }),
         200,
-        { 'Cache-Control': 'no-store' }
+        { 'Cache-Control': 'public, max-age=30' }
     );
 });
 
