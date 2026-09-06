@@ -108,7 +108,52 @@ pre{background:#111;color:#e5e7eb;padding:14px 16px;border-radius:10px;overflow-
 svg rect:hover{fill:#4338ca}
 `;
 
-export function renderJourney({ slug, journey, days, funnel, steps }) {
+function hhmm(iso) {
+    return String(iso || '').slice(11, 16);
+}
+
+function dayLabel(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+function ago(iso) {
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 90) return 'just now';
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+}
+
+function dot(hash) {
+    const hue = parseInt(hash.slice(0, 4), 16) % 360;
+    return `<span class="dot" style="background:hsl(${hue},60%,45%)"></span>`;
+}
+
+function visitorTable(visitors, funnel) {
+    if (!visitors || !visitors.length) return '';
+    const multiHost = new Set(funnel.filter(f => f.host).map(f => f.host)).size > 1;
+    const label = (s) => (multiHost && s.host ? `${esc(s.host)}${s.step.startsWith('/') ? '' : ' · '}${esc(s.step)}` : esc(s.step));
+
+    const rows = visitors.slice(0, 20).map(v => {
+        const seq = v.steps.map(s => `<span class="vstep"><span class="vt">${hhmm(s.t)}</span> ${label(s)}</span>`).join('<span class="varrow">→</span>');
+        const status = v.completed
+            ? `<span class="ok">completed</span>`
+            : `<span class="stall">stalled at ${label(v.steps[v.steps.length - 1])} · ${ago(v.lastT)}</span>`;
+        return `<tr>
+            <td class="vid">${dot(v.hash)}${esc(v.hash.slice(0, 8))}</td>
+            <td class="vseq">${seq}</td>
+            <td class="vstat">${status}<br><span class="dim">${dayLabel(v.firstT)}</span></td>
+        </tr>`;
+    }).join('');
+
+    return `<div class="card"><h2>Visitors (${visitors.length}${visitors.length > 20 ? ', showing 20 recent' : ''})</h2><table class="vtable">
+<thead><tr><th>Visitor</th><th>Steps (in order, first touch)</th><th>Status</th></tr></thead>
+<tbody>${rows}</tbody>
+</table></div>`;
+}
+
+export function renderJourney({ slug, journey, days, funnel, visitors, steps }) {
     const range = [['7', 7], ['30', 30], ['90', 90]].map(([label, d]) =>
         `<a class="range${d === days ? ' active' : ''}" href="/${esc(slug)}/${esc(journey)}?days=${d}">${label}d</a>`).join('');
 
@@ -140,6 +185,16 @@ export function renderJourney({ slug, journey, days, funnel, steps }) {
 <meta name="robots" content="noindex"><title>${esc(journey)} · ${esc(slug)} · fork stats</title><style>${CSS}
 .fbar{background:#f3f4f6;border-radius:4px;height:14px;min-width:120px}.ffill{background:#6366f1;height:14px;border-radius:4px}
 th.r,td.r{text-align:right}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+.vid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:nowrap}
+.vseq{font-size:13px;line-height:1.9}
+.vstep{white-space:nowrap}
+.vt{color:#9ca3af;font-size:11px;margin-right:2px}
+.varrow{color:#c4b5fd;margin:0 7px}
+.ok{color:#059669;font-weight:600}
+.stall{color:#b45309;font-weight:600}
+.vtable td{vertical-align:top}
+.vstat{white-space:nowrap}
 </style></head><body>
 <main><p class="brand"><a href="/">fork stats</a> / <a href="/${esc(slug)}">${esc(slug)}</a> <span class="rangebox">${range}</span></p>
 <h1>${esc(journey)}</h1>
@@ -149,6 +204,7 @@ th.r,td.r{text-align:right}
 <thead><tr><th>Step</th><th></th><th class="r">Visitors</th><th class="r">Of starters</th><th class="r">From prev</th></tr></thead>
 <tbody>${rows}</tbody>
 </table></div>
-<p class="dim">Last ${days} days · ${steps.length} step${steps.length === 1 ? '' : 's'} · a visitor reaches a step only after touching every earlier step in order</p>
+${visitorTable(visitors, funnel)}
+<p class="dim">Last ${days} days · ${steps.length} step${steps.length === 1 ? '' : 's'} · a visitor reaches a step only after touching every earlier step in order · times UTC</p>
 </main></body></html>`;
 }

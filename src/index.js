@@ -196,19 +196,38 @@ function computeFunnel(rows) {
 
     const byVisitor = new Map();
     for (const r of rows) {
-        const key = r.host + '|' + r.step;
-        if (!byVisitor.has(r.visitor_hash)) byVisitor.set(r.visitor_hash, {});
-        const v = byVisitor.get(r.visitor_hash);
-        if (!v[key] || r.t < v[key]) v[key] = r.t;
+        if (!byVisitor.has(r.visitor_hash)) byVisitor.set(r.visitor_hash, []);
+        byVisitor.get(r.visitor_hash).push(r);
     }
+
+    const lastStepKey = steps[steps.length - 1];
+    const visitors = [];
+    for (const [hash, events] of byVisitor) {
+        // one entry per visitor per step (earliest touch), ordered in time
+        const seen = new Map();
+        for (const r of events) {
+            const key = r.host + '|' + r.step;
+            if (!seen.has(key) || r.t < seen.get(key).t) seen.set(key, r);
+        }
+        const sequence = [...seen.values()].sort((a, b) => a.t < b.t ? -1 : 1);
+        visitors.push({
+            hash,
+            steps: sequence.map(r => ({ step: r.step, host: r.host, t: r.t })),
+            firstT: sequence[0]?.t,
+            lastT: sequence[sequence.length - 1]?.t,
+            completed: seen.has(lastStepKey)
+        });
+    }
+    visitors.sort((a, b) => (a.lastT < b.lastT ? 1 : -1));
 
     // Ordered funnel: a visitor "reaches" step N only if they touched
     // every earlier step at an earlier (or equal) time, in sequence
     const reached = new Array(steps.length).fill(0);
-    for (const v of byVisitor.values()) {
+    for (const v of visitors) {
+        const touched = new Map(v.steps.map(s => [s.host + '|' + s.step, s.t]));
         let cursor = '';
         for (let i = 0; i < steps.length; i++) {
-            const t = v[steps[i]];
+            const t = touched.get(steps[i]);
             if (t && t >= cursor) {
                 reached[i]++;
                 cursor = t;
@@ -218,13 +237,15 @@ function computeFunnel(rows) {
         }
     }
 
-    return steps.map((key, i) => ({
+    const funnel = steps.map((key, i) => ({
         host: key.split('|')[0],
         step: key.split('|')[1],
         visitors: reached[i],
         pctOfStart: reached[0] ? Math.round((reached[i] / reached[0]) * 100) : 0,
         pctFromPrev: i === 0 ? 100 : (reached[i - 1] ? Math.round((reached[i] / reached[i - 1]) * 100) : 0)
     }));
+
+    return { funnel, visitors };
 }
 
 app.get('/:slug/:journey', async (c) => {
@@ -244,12 +265,15 @@ app.get('/:slug/:journey', async (c) => {
         GROUP BY step, host, visitor_hash
     `).bind(slug, journey, cutoff).all();
 
+    const { funnel, visitors } = computeFunnel(results || []);
+
     return c.html(
         renderJourney({
             slug,
             journey,
             days,
-            funnel: computeFunnel(results || []),
+            funnel,
+            visitors,
             steps: [...new Set((results || []).map(r => r.host + '|' + r.step))]
         }),
         200,
